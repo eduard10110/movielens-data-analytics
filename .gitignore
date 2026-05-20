@@ -1,0 +1,35 @@
+# Environment
+.env
+*.env
+
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+.Python
+*.egg-info/
+dist/
+build/
+*.log
+.pytest_cache/
+
+# Data (large files – do not commit)
+data/*.csv
+data/*.txt
+
+# Docker volumes
+postgres_data/
+mssql_data/
+
+# Airflow
+airflow/logs/
+airflow/plugins/
+
+# IDE
+.idea/
+.vscode/
+*.swp
+.DS_Store
+
+# Temp pickle files
+*.pkl

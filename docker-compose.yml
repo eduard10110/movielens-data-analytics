@@ -1,0 +1,142 @@
+version: "3.9"
+
+x-airflow-common: &airflow-common
+  image: apache/airflow:2.9.3-python3.11
+  environment: &airflow-common-env
+    AIRFLOW__CORE__EXECUTOR: LocalExecutor
+    AIRFLOW__DATABASE__SQL_ALCHEMY_CONN: postgresql+psycopg2://airflow:airflow@postgres/airflow
+    AIRFLOW__CORE__FERNET_KEY: ""
+    AIRFLOW__CORE__DAGS_ARE_PAUSED_AT_CREATION: "true"
+    AIRFLOW__CORE__LOAD_EXAMPLES: "false"
+    AIRFLOW__API__AUTH_BACKENDS: "airflow.api.auth.backend.basic_auth"
+    AIRFLOW__WEBSERVER__EXPOSE_CONFIG: "true"
+    MSSQL_HOST: ${MSSQL_HOST:-mssql}
+    MSSQL_PORT: ${MSSQL_PORT:-1433}
+    MSSQL_USER: ${MSSQL_USER:-sa}
+    MSSQL_PASSWORD: ${MSSQL_PASSWORD:-MovieLens@2024}
+    MSSQL_DB: ${MSSQL_DB:-MovieLensDB}
+    DATA_DIR: /data
+    APP_DIR: /app
+    _PIP_ADDITIONAL_REQUIREMENTS: >
+      pandas==2.2.2 sqlalchemy==2.0.30 pyodbc==5.1.0 pymssql==2.3.0 python-dotenv==1.0.1
+  volumes:
+    - ./airflow/dags:/opt/airflow/dags
+    - airflow_logs:/opt/airflow/logs
+    - airflow_plugins:/opt/airflow/plugins
+    - ./app:/app
+    - ./sql:/sql
+    - movielens_data:/data
+  depends_on:
+    postgres:
+      condition: service_healthy
+    mssql:
+      condition: service_healthy
+
+services:
+  postgres:
+    image: postgres:15
+    container_name: movielens_postgres
+    environment:
+      POSTGRES_USER: airflow
+      POSTGRES_PASSWORD: airflow
+      POSTGRES_DB: airflow
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD", "pg_isready", "-U", "airflow"]
+      interval: 10s
+      retries: 5
+      start_period: 30s
+    restart: unless-stopped
+
+  mssql:
+    image: mcr.microsoft.com/mssql/server:2022-latest
+    container_name: movielens_mssql
+    environment:
+      ACCEPT_EULA: "Y"
+      MSSQL_SA_PASSWORD: ${MSSQL_PASSWORD:-MovieLens@2024}
+      MSSQL_PID: Developer
+    ports:
+      - "1433:1433"
+    volumes:
+      - mssql_data:/var/opt/mssql
+      - ./sql:/sql
+      - ./docker/mssql-init.sh:/docker-entrypoint-initdb.d/mssql-init.sh
+    healthcheck:
+      test: >
+        /opt/mssql-tools18/bin/sqlcmd
+        -S localhost -U sa -P "$$MSSQL_SA_PASSWORD"
+        -Q "SELECT 1" -b -No
+      interval: 15s
+      retries: 10
+      start_period: 60s
+    restart: unless-stopped
+
+  airflow-init:
+    <<: *airflow-common
+    container_name: movielens_airflow_init
+    entrypoint: /bin/bash
+    command:
+      - -c
+      - |
+        airflow db migrate
+        airflow users create --username admin --firstname Admin --lastname Team6 \
+          --role Admin --email admin@movielens.local --password admin || true
+    restart: "no"
+
+  airflow-webserver:
+    <<: *airflow-common
+    container_name: movielens_airflow_webserver
+    command: webserver
+    ports:
+      - "8080:8080"
+    healthcheck:
+      test: ["CMD", "curl", "--fail", "http://localhost:8080/health"]
+      interval: 30s
+      retries: 5
+      start_period: 60s
+    restart: unless-stopped
+    depends_on:
+      airflow-init:
+        condition: service_completed_successfully
+
+  airflow-scheduler:
+    <<: *airflow-common
+    container_name: movielens_airflow_scheduler
+    command: scheduler
+    restart: unless-stopped
+    depends_on:
+      airflow-init:
+        condition: service_completed_successfully
+
+  etl-app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: movielens_etl
+    environment:
+      MSSQL_HOST: ${MSSQL_HOST:-mssql}
+      MSSQL_PORT: ${MSSQL_PORT:-1433}
+      MSSQL_USER: ${MSSQL_USER:-sa}
+      MSSQL_PASSWORD: ${MSSQL_PASSWORD:-MovieLens@2024}
+      MSSQL_DB: ${MSSQL_DB:-MovieLensDB}
+      DATA_DIR: /data
+    volumes:
+      - movielens_data:/data
+      - ./sql:/sql
+    depends_on:
+      mssql:
+        condition: service_healthy
+    restart: "no"
+
+volumes:
+  postgres_data:
+  mssql_data:
+  airflow_logs:
+  airflow_plugins:
+  movielens_data:
+    driver: local
+    driver_opts:
+      type: none
+      o: bind
+      device: ${DATA_SOURCE_PATH:-./data}
