@@ -2,9 +2,19 @@ import pandas as pd
 from pathlib import Path
 from typing import Dict
 
-from utils import get_logger, resolve_data_dir, validate_files, log_dataframe_info, timer
+from utils import (
+    get_logger,
+    resolve_data_dir,
+    validate_files,
+    log_dataframe_info,
+    timer,
+    sample_csv_random,
+)
 
 logger = get_logger("extract")
+
+RATINGS_DTYPE = {"userId": int, "movieId": int, "rating": float, "timestamp": int}
+GENOME_SCORES_DTYPE = {"movieId": int, "tagId": int, "relevance": float}
 
 
 @timer
@@ -20,20 +30,9 @@ def extract_movies(path: Path) -> pd.DataFrame:
 
 
 @timer
-def extract_ratings(path: Path, chunksize: int = 500_000) -> pd.DataFrame:
-    """
-    Read ratings.csv in chunks to handle large files (33 M+ rows).
-    Returns a consolidated DataFrame.
-    """
-    logger.info("Extracting ratings from %s (chunk=%d)", path, chunksize)
-    chunks = []
-    for chunk in pd.read_csv(
-        path,
-        dtype={"userId": int, "movieId": int, "rating": float, "timestamp": int},
-        chunksize=chunksize,
-    ):
-        chunks.append(chunk)
-    df = pd.concat(chunks, ignore_index=True)
+def extract_ratings(path: Path) -> pd.DataFrame:
+    """Random sample from ratings.csv (default 500,000 rows)."""
+    df = sample_csv_random(path, RATINGS_DTYPE)
     log_dataframe_info(df, "ratings")
     return df
 
@@ -70,26 +69,15 @@ def extract_genome_tags(path: Path) -> pd.DataFrame:
 
 
 @timer
-def extract_genome_scores(path: Path, chunksize: int = 500_000) -> pd.DataFrame:
-    """Read genome-scores.csv in chunks."""
-    logger.info("Extracting genome-scores from %s (chunk=%d)", path, chunksize)
-    chunks = []
-    for chunk in pd.read_csv(
-        path,
-        dtype={"movieId": int, "tagId": int, "relevance": float},
-        chunksize=chunksize,
-    ):
-        chunks.append(chunk)
-    df = pd.concat(chunks, ignore_index=True)
+def extract_genome_scores(path: Path) -> pd.DataFrame:
+    """Random sample from genome-scores.csv (default 500,000 rows)."""
+    df = sample_csv_random(path, GENOME_SCORES_DTYPE)
     log_dataframe_info(df, "genome_scores")
     return df
 
 
 def run_extract() -> Dict[str, pd.DataFrame]:
-    """
-    Main extraction entry point.
-    Returns a dict of raw DataFrames keyed by table name.
-    """
+    """Main extraction entry point."""
     data_dir = resolve_data_dir()
     paths    = validate_files(data_dir)
 

@@ -110,11 +110,14 @@ services:
         condition: service_completed_successfully
 
   etl-app:
+    platform: linux/amd64
     build:
       context: .
       dockerfile: Dockerfile
     container_name: movielens_etl
     environment:
+      SAMPLE_ROWS: ${SAMPLE_ROWS:-500000}
+      SAMPLE_SEED: ${SAMPLE_SEED:-42}
       MSSQL_HOST: ${MSSQL_HOST:-mssql}
       MSSQL_PORT: ${MSSQL_PORT:-1433}
       MSSQL_USER: ${MSSQL_USER:-sa}
@@ -124,6 +127,37 @@ services:
     volumes:
       - movielens_data:/data
       - ./sql:/sql
+    depends_on:
+      mssql:
+        condition: service_healthy
+    restart: "no"
+
+  analytics:
+    platform: linux/amd64
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: movielens_analytics
+    environment:
+      MSSQL_HOST: ${MSSQL_HOST:-mssql}
+      MSSQL_PORT: ${MSSQL_PORT:-1433}
+      MSSQL_USER: ${MSSQL_USER:-sa}
+      MSSQL_PASSWORD: ${MSSQL_PASSWORD:-MovieLens@2024}
+      MSSQL_DB: ${MSSQL_DB:-MovieLensDB}
+      QUERIES_FILE: /sql/queries.sql
+      OUTPUT_DIR: /output/analytics
+      REPORT_HTML: /output/analytics_report.html
+      DOCS_DIR: /docs
+      APP_DIR: /app
+    volumes:
+      - ./sql:/sql
+      - ./scripts:/scripts
+      - ./output:/output
+      - ./docs:/docs
+    working_dir: /app
+    command: >
+      bash -c "python /scripts/run_sql_analytics.py &&
+               python /scripts/generate_armenian_docx.py"
     depends_on:
       mssql:
         condition: service_healthy

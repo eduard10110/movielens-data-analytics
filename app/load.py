@@ -17,13 +17,12 @@ LOAD_ORDER = [
     "tags",
 ]
 
-CHUNK_SIZE = 50_000
+CHUNK_SIZE = 5_000
 
 
 @timer
 def ensure_schema(engine) -> None:
     """Execute schema.sql DDL to create tables if they don't exist."""
-    import os
     from pathlib import Path
 
     schema_candidates = [
@@ -90,17 +89,13 @@ def load_table(engine, table_name: str, df: pd.DataFrame) -> None:
         if_exists="append",
         index=False,
         chunksize=CHUNK_SIZE,
-        method="multi",
     )
 
     logger.info("Loaded [dbo].[%s]: %d rows.", table_name, total)
 
 
 def run_load(transformed: Dict[str, pd.DataFrame]) -> None:
-    """
-    Main load entry point.
-    Creates schema, truncates existing data, and bulk-inserts all tables.
-    """
+    """Create schema, truncate tables, and bulk-insert all transformed data."""
     logger.info("=== Load phase started ===")
     engine = get_engine()
 

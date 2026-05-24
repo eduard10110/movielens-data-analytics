@@ -78,11 +78,8 @@ def build_genres_table(movie_genres: pd.DataFrame) -> pd.DataFrame:
 
 
 # Ratings
-@timer
-def transform_ratings(df: pd.DataFrame, valid_movie_ids: set) -> pd.DataFrame:
-    """Clean and validate ratings."""
-    logger.info("Transforming ratings (%d rows)...", len(df))
-
+def transform_ratings_chunk(df: pd.DataFrame, valid_movie_ids: set) -> pd.DataFrame:
+    """Clean and validate one ratings chunk."""
     df = df.drop_duplicates(subset=["userId", "movieId", "timestamp"])
     df = df.dropna(subset=["userId", "movieId", "rating", "timestamp"])
 
@@ -95,9 +92,16 @@ def transform_ratings(df: pd.DataFrame, valid_movie_ids: set) -> pd.DataFrame:
     # Convert Unix timestamp → datetime
     df["rating_date"] = pd.to_datetime(df["timestamp"], unit="s", utc=True).dt.tz_localize(None)
 
-    df = df[["userId", "movieId", "rating", "rating_date"]].copy()
-    log_dataframe_info(df, "ratings_clean")
-    return df
+    return df[["userId", "movieId", "rating", "rating_date"]].copy()
+
+
+@timer
+def transform_ratings(df: pd.DataFrame, valid_movie_ids: set) -> pd.DataFrame:
+    """Clean and validate ratings (full DataFrame)."""
+    logger.info("Transforming ratings (%d rows)...", len(df))
+    out = transform_ratings_chunk(df, valid_movie_ids)
+    log_dataframe_info(out, "ratings_clean")
+    return out
 
 
 # Tags
@@ -150,16 +154,23 @@ def transform_genome_tags(df: pd.DataFrame) -> pd.DataFrame:
     return df
 
 
-@timer
-def transform_genome_scores(df: pd.DataFrame, valid_movie_ids: set, valid_tag_ids: set) -> pd.DataFrame:
-    """Clean genome scores, restrict to movies/tags that exist."""
-    logger.info("Transforming genome scores (%d rows)...", len(df))
+def transform_genome_scores_chunk(
+    df: pd.DataFrame, valid_movie_ids: set, valid_tag_ids: set
+) -> pd.DataFrame:
+    """Clean one genome-scores chunk."""
     df = df.drop_duplicates()
     df = df[(df["relevance"] >= 0.0) & (df["relevance"] <= 1.0)]
     df = df[df["movieId"].isin(valid_movie_ids)]
-    df = df[df["tagId"].isin(valid_tag_ids)]
-    log_dataframe_info(df, "genome_scores_clean")
-    return df
+    return df[df["tagId"].isin(valid_tag_ids)]
+
+
+@timer
+def transform_genome_scores(df: pd.DataFrame, valid_movie_ids: set, valid_tag_ids: set) -> pd.DataFrame:
+    """Clean genome scores (full DataFrame)."""
+    logger.info("Transforming genome scores (%d rows)...", len(df))
+    out = transform_genome_scores_chunk(df, valid_movie_ids, valid_tag_ids)
+    log_dataframe_info(out, "genome_scores_clean")
+    return out
 
 
 # Main entry point

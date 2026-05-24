@@ -148,7 +148,7 @@ WITH yearly AS (
     JOIN dbo.movies  m ON m.movieId = r.movieId
     GROUP BY m.movieId, m.title, YEAR(r.rating_date)
 )
-SELECT
+SELECT TOP 5000
     movieId,
     title,
     yr,
@@ -212,4 +212,142 @@ JOIN dbo.movie_genres mg ON mg.movieId = r.movieId
 JOIN dbo.genres       g  ON g.genreId  = mg.genreId
 GROUP BY r.userId
 ORDER BY distinct_genres DESC, total_ratings DESC;
+GO
+
+-- Q16: External ID Coverage (IMDB / TMDB links)
+SELECT
+    COUNT(*)                                              AS total_movies,
+    SUM(CASE WHEN l.imdbId IS NOT NULL AND l.imdbId <> '' THEN 1 ELSE 0 END) AS with_imdb,
+    SUM(CASE WHEN l.tmdbId IS NOT NULL AND l.tmdbId <> '' THEN 1 ELSE 0 END) AS with_tmdb,
+    ROUND(100.0 * SUM(CASE WHEN l.imdbId IS NOT NULL AND l.imdbId <> '' THEN 1 ELSE 0 END)
+        / NULLIF(COUNT(*), 0), 2)                         AS imdb_pct,
+    ROUND(100.0 * SUM(CASE WHEN l.tmdbId IS NOT NULL AND l.tmdbId <> '' THEN 1 ELSE 0 END)
+        / NULLIF(COUNT(*), 0), 2)                         AS tmdb_pct
+FROM dbo.movies m
+LEFT JOIN dbo.links l ON l.movieId = m.movieId;
+GO
+
+-- Q17: Rating Distribution by Day of Week
+SELECT
+    DATENAME(WEEKDAY, rating_date)                        AS weekday_name,
+    DATEPART(WEEKDAY, rating_date)                        AS weekday_num,
+    COUNT(*)                                              AS total_ratings,
+    ROUND(AVG(CAST(rating AS FLOAT)), 3)                  AS avg_rating,
+    COUNT(DISTINCT userId)                                AS distinct_users
+FROM dbo.ratings
+GROUP BY DATENAME(WEEKDAY, rating_date), DATEPART(WEEKDAY, rating_date)
+ORDER BY weekday_num;
+GO
+
+-- Q18: Most Controversial Movies (high rating standard deviation, min 200 ratings)
+SELECT TOP 25
+    m.movieId,
+    m.title,
+    m.release_year,
+    COUNT(r.ratingId)                                     AS total_ratings,
+    ROUND(AVG(CAST(r.rating AS FLOAT)), 3)                AS avg_rating,
+    ROUND(STDEV(CAST(r.rating AS FLOAT)), 3)              AS rating_stddev
+FROM dbo.movies m
+JOIN dbo.ratings r ON r.movieId = m.movieId
+GROUP BY m.movieId, m.title, m.release_year
+HAVING COUNT(r.ratingId) >= 200
+ORDER BY rating_stddev DESC, total_ratings DESC;
+GO
+
+-- Q19: Genre Rating Percentiles (median and IQR proxy)
+WITH genre_ratings AS (
+    SELECT g.genreName, r.rating
+    FROM dbo.genres g
+    JOIN dbo.movie_genres mg ON mg.genreId = g.genreId
+    JOIN dbo.ratings r ON r.movieId = mg.movieId
+),
+percentiles AS (
+    SELECT DISTINCT
+        genreName,
+        PERCENTILE_CONT(0.25) WITHIN GROUP (ORDER BY rating)
+            OVER (PARTITION BY genreName) AS p25_rating,
+        PERCENTILE_CONT(0.50) WITHIN GROUP (ORDER BY rating)
+            OVER (PARTITION BY genreName) AS median_rating,
+        PERCENTILE_CONT(0.75) WITHIN GROUP (ORDER BY rating)
+            OVER (PARTITION BY genreName) AS p75_rating
+    FROM genre_ratings
+)
+SELECT
+    gr.genreName,
+    COUNT(*)                                              AS total_ratings,
+    ROUND(AVG(CAST(gr.rating AS FLOAT)), 3)               AS avg_rating,
+    ROUND(p.p25_rating, 3)                                AS p25_rating,
+    ROUND(p.median_rating, 3)                             AS median_rating,
+    ROUND(p.p75_rating, 3)                                AS p75_rating
+FROM genre_ratings gr
+JOIN percentiles p ON p.genreName = gr.genreName
+GROUP BY gr.genreName, p.p25_rating, p.median_rating, p.p75_rating
+ORDER BY avg_rating DESC;
+GO
+
+-- Q20: Top-Rated Movie per Genre (min 50 ratings per movie)
+WITH ranked AS (
+    SELECT
+        g.genreName,
+        m.title,
+        COUNT(r.ratingId)                                 AS total_ratings,
+        AVG(CAST(r.rating AS FLOAT))                      AS avg_rating,
+        ROW_NUMBER() OVER (
+            PARTITION BY g.genreName
+            ORDER BY AVG(CAST(r.rating AS FLOAT)) DESC, COUNT(r.ratingId) DESC
+        ) AS rn
+    FROM dbo.genres g
+    JOIN dbo.movie_genres mg ON mg.genreId = g.genreId
+    JOIN dbo.movies m ON m.movieId = mg.movieId
+    JOIN dbo.ratings r ON r.movieId = m.movieId
+    GROUP BY g.genreName, m.movieId, m.title
+    HAVING COUNT(r.ratingId) >= 50
+)
+SELECT genreName, title, total_ratings, ROUND(avg_rating, 3) AS avg_rating
+FROM ranked
+WHERE rn = 1
+ORDER BY avg_rating DESC;
+GO
+
+-- Q21: User Generosity vs Global Average (strict vs generous raters)
+WITH global_avg AS (
+    SELECT AVG(CAST(rating AS FLOAT)) AS g_avg FROM dbo.ratings
+),
+user_stats AS (
+    SELECT
+        userId,
+        COUNT(*)                                      AS total_ratings,
+        AVG(CAST(rating AS FLOAT))                    AS user_avg
+    FROM dbo.ratings
+    GROUP BY userId
+    HAVING COUNT(*) >= 100
+)
+SELECT TOP 30
+    u.userId,
+    u.total_ratings,
+    ROUND(u.user_avg, 3)                              AS user_avg_rating,
+    ROUND(g.g_avg, 3)                                 AS global_avg_rating,
+    ROUND(u.user_avg - g.g_avg, 3)                    AS bias_vs_global,
+    CASE
+        WHEN u.user_avg - g.g_avg >= 0.5 THEN N'Գեներոզ'
+        WHEN u.user_avg - g.g_avg <= -0.5 THEN N'Խիստ'
+        ELSE N'Միջին'
+    END                                               AS rater_type
+FROM user_stats u
+CROSS JOIN global_avg g
+ORDER BY bias_vs_global DESC;
+GO
+
+-- Q22: Release Year vs Popularity and Quality
+SELECT
+    m.release_year,
+    COUNT(DISTINCT m.movieId)                         AS movie_count,
+    COUNT(r.ratingId)                                 AS total_ratings,
+    ROUND(AVG(CAST(r.rating AS FLOAT)), 3)            AS avg_rating
+FROM dbo.movies m
+JOIN dbo.ratings r ON r.movieId = m.movieId
+WHERE m.release_year IS NOT NULL AND m.release_year >= 1950
+GROUP BY m.release_year
+HAVING COUNT(r.ratingId) >= 1000
+ORDER BY m.release_year;
 GO

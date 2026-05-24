@@ -4,3 +4,4 @@ pyodbc==5.1.0
 pymssql==2.3.0
 python-dotenv==1.0.1
 numpy==1.26.4
+python-docx==1.1.2
